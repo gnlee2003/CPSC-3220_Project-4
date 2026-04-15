@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
 
 #define BUFFERSIZE 1024
 #define SECTORSIZE 512
@@ -11,12 +14,16 @@
 #define ROOTDIRSTART 19
 #define DATASTART 33
 
+#define NAME 1
+#define EXT 2
+
 typedef struct{
     char fileName[8];
     char extension[3];
     uint8_t Attributes;
-    uint16_t Reserved;
+    uint16_t Reserved[2];
     uint16_t creationTime;
+    uint16_t creationDate;
     uint16_t lastAccessDate;
     uint16_t lastWriteTime;
     uint16_t lastWriteDate;
@@ -24,43 +31,77 @@ typedef struct{
     uint32_t fileSize;
 }__attribute__((packed)) dirEntry;
 
+char *nameFormat(char *string, int TYPE){
+    char *buf = calloc(1, 64);
+    int len;
+    len = (TYPE == NAME) ? 8 : 3;
+    memcpy(buf, string, len);
+
+    int i = 0;
+    while (buf[i] != ' ' && i < len){
+        i++;
+    }
+    buf[i] = '\0';
+
+    return buf;
+}
+
+void printFormat(dirEntry *entry){
+    printf("FILE\tNORMAL\t%.8s.%.3s\t%d\n", nameFormat(entry -> fileName, NAME), nameFormat(entry -> extension, EXT), entry -> fileSize);
+}
+
+void clusterFormat(uint8_t value1, uint8_t value2, uint8_t value3, uint16_t *out1, uint16_t *out2){
+    *out1 = ((value2 & 0x0F) << 8) | value1;
+    *out2 = (value3 << 4) | (value2 >> 4);
+}
+
+void subDirectoryFunc(char *FAT1Start, char *dataStart, int firstCluster){
+    int offset = (firstCluster - 2) * SECTORSIZE;
+    uint16_t out1, out2;
+    clusterFormat((uint8_t)FAT1Start[offset], (uint8_t)FAT1Start[offset + 1], (uint8_t)FAT1Start[offset + 2], &out1, &out2);
+    uint64_t *data1;
+
+    data1 = (firstCluster % 2 == 0) ? (uint64_t *)(dataStart + (out1 * sizeof(char))) : (uint64_t *)(dataStart + (out2 * sizeof(char)));
+}
+
 int main(int argc, char *argv[]){
     if (argc != 3){
         printf("Correct Usage: ./notjustcats <imagefilename> <output_directory>\n");
         return 0;
     }
     char *imageFile = argv[1];
-    char *outputDirectory = argv[2];
+    //char *outputDirectory = argv[2];
 
-    FILE *fp = fopen(imageFile, "r");
-    if (fp == NULL){
-        perror("fopen");
-        return 0;
-    }
-
-    dirEntry *entry = malloc(sizeof(dirEntry));
+    int fd = open(imageFile, O_RDWR, S_IRUSR | S_IWUSR);
+    struct stat sb;
+    fstat(fd,&sb);
+    char *filemappedpage = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
     
+    char *FAT1 = filemappedpage + (SECTORSIZE * FAT1START);
+    //char *FAT2 = filemappedpage + (SECTORSIZE * FAT2START);
+    char *rootDir = filemappedpage + (SECTORSIZE * ROOTDIRSTART);
+    //char *Data = filemappedpage + (SECTORSIZE * DATASTART);
+
+    dirEntry *entry = NULL;
+    printf("sizeof(dirEntry) = %lu\n", sizeof(dirEntry));
     int i = 0;
-    int location = ROOTDIRSTART;
-    while (location < DATASTART){
-        fseek(fp, (ROOTDIRSTART * SECTORSIZE) + i, SEEK_SET); //Get to the first entry of root dir
-        fread(entry, sizeof(dirEntry), 1, fp);
-
-        if (entry -> fileName[0] == 0x00) break; //No more entries
-        if (entry -> Attributes == 0x0F) continue; //Ignore Long File Names
-        if (entry -> Attributes & 0x08) continue; //volume label
-
-        if (entry -> fileName[0] == 0xE5){ //delete File
-
-        }else if (entry -> Attributes & 0x10){ //subdirectory
-        
-        }else{ //normal file
-            printf("FILE\tNORMAL\t%.8s.%.3s\t%d\n", entry -> fileName, entry -> extension, entry -> fileSize);
+    while (i < 224){ //All possible root directory entries
+        entry = (dirEntry *)(rootDir + (i * sizeof(dirEntry)));
+        if (entry -> fileName[0] == 0x00) break;
+        else if (entry -> Attributes == 0x0F) i++;
+        else if(entry -> fileName[0] == 0xE5){
+            //Deleted File
+            i++;
+        }else if(entry -> Attributes & 0x10){
+            //Subdirectory
+            int cluster = entry->firstLogicalCluster;
+            int offset = (cluster * 3) / 2;
+            i++;
+        }else{
+            //Actual File
+            printFormat(entry);
+            i++;
         }
-        i = i + 16;
-        location = location + 16;
     }
-
-    fclose(fp);
     return 0;
 }

@@ -12,5 +12,8 @@ notjustcats: notjustcats.c
 clean:
 	rm -f notjustcats
 
-tar:
+submit:
 	tar cvzf project4.tgz README Makefile notjustcats.c
+	git add notjustcats.c Makefile README
+	git commit -m "Auto Project Update"
+	git push
