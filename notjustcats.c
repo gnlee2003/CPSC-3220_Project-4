@@ -55,13 +55,9 @@ void clusterFormat(uint8_t value1, uint8_t value2, uint8_t value3, uint16_t *out
     *out2 = (value3 << 4) | (value2 >> 4);
 }
 
-void subDirectoryFunc(char *FAT1Start, char *dataStart, int firstCluster){
-    int offset = (firstCluster - 2) * SECTORSIZE;
-    uint16_t out1, out2;
-    clusterFormat((uint8_t)FAT1Start[offset], (uint8_t)FAT1Start[offset + 1], (uint8_t)FAT1Start[offset + 2], &out1, &out2);
-    uint64_t *data1;
-
-    data1 = (firstCluster % 2 == 0) ? (uint64_t *)(dataStart + (out1 * sizeof(char))) : (uint64_t *)(dataStart + (out2 * sizeof(char)));
+void subdirectoryHandler(dirEntry *entry){
+    uint16_t cluster = entry -> firstLogicalCluster;
+    
 }
 
 int main(int argc, char *argv[]){
@@ -94,8 +90,7 @@ int main(int argc, char *argv[]){
             i++;
         }else if(entry -> Attributes & 0x10){
             //Subdirectory
-            int cluster = entry->firstLogicalCluster;
-            int offset = (cluster * 3) / 2;
+            subdirectoryHandler(entry);
             i++;
         }else{
             //Actual File
