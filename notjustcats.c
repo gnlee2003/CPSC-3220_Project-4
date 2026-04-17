@@ -5,9 +5,11 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <assert.h>
 
 #define BUFFERSIZE 1024
 #define SECTORSIZE 512
+#define PATHBUFFER 64
 
 #define FAT1START 1
 #define FAT2START 10
@@ -16,6 +18,14 @@
 
 #define NAME 1
 #define EXT 2
+
+int numFiles = 0; //Keep track of number of files for naming purposes
+
+typedef struct{
+    char *fileName;
+    int fileSize;
+    char *Data;
+} fileStruct;
 
 typedef struct{
     char fileName[8];
@@ -32,13 +42,13 @@ typedef struct{
 }__attribute__((packed)) dirEntry;
 
 char *nameFormat(char *string, int TYPE){
-    char *buf = calloc(1, 64);
+    char *buf = calloc(1, PATHBUFFER);
     int len;
     len = (TYPE == NAME) ? 8 : 3;
     memcpy(buf, string, len);
 
     int i = 0;
-    while (buf[i] != ' ' && i < len){
+    while (i < len && buf[i] != ' '){
         i++;
     }
     buf[i] = '\0';
@@ -50,14 +60,72 @@ void printFormat(dirEntry *entry){
     printf("FILE\tNORMAL\t%.8s.%.3s\t%d\n", nameFormat(entry -> fileName, NAME), nameFormat(entry -> extension, EXT), entry -> fileSize);
 }
 
+void createFile(fileStruct *file, char *outDir){
+    FILE *f = fopen("file -> fileName", "w");
+    fwrite(file -> Data, 1, file -> fileSize, f);
+    fclose(f);
+
+    printf("FILE\tNORMAL\t%s\t%d\n", file -> fileName, file -> fileSize);
+}
+
 void clusterFormat(uint8_t value1, uint8_t value2, uint8_t value3, uint16_t *out1, uint16_t *out2){
     *out1 = ((value2 & 0x0F) << 8) | value1;
     *out2 = (value3 << 4) | (value2 >> 4);
 }
 
-void subdirectoryHandler(dirEntry *entry){
-    uint16_t cluster = entry -> firstLogicalCluster;
-    
+void recFATHandler(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir, char *currentFilePath){
+    if (entry -> fileName[0] == 0x00) return; //Base Case
+    else if(entry -> Attributes & 0x10 && entry -> fileName[0] != '.'){
+        //Subdirectory
+        char buf[PATHBUFFER];
+        snprintf(buf, sizeof(buf), "%s%s/", currentFilePath, nameFormat(entry -> fileName, NAME));
+
+        int cluster = entry -> firstLogicalCluster;
+        int sector = DATASTART + (cluster - 2);
+        dirEntry *nextDir = (dirEntry *)(Data + (sector * SECTORSIZE));
+        recFATHandler(nextDir, FAT, Data, outDir, buf);
+        recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
+    }else if(entry -> fileName[0] == 0xE5){
+        //Deleted File
+        printf("Deleted...\n");
+        recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
+    }else if(entry -> Attributes == 0x0F)return recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
+    else{
+        //Handle the File
+        fileStruct *file = malloc(sizeof(fileStruct));
+        file -> fileName = malloc(PATHBUFFER);
+        char buf[256];
+        snprintf(buf, sizeof(buf), "%s%s.%s", currentFilePath, nameFormat(entry -> fileName, NAME), nameFormat(entry -> extension, EXT));
+        strcpy(file -> fileName, buf);
+        file -> fileSize = entry -> fileSize;
+        file -> Data = calloc(1, file -> fileSize);
+
+        int cluster = entry -> firstLogicalCluster;
+        int sector = DATASTART + (cluster - 2);
+        char *fileData = Data + (sector * SECTORSIZE);
+        if (entry -> fileSize <= SECTORSIZE){
+            memcpy(file -> Data, fileData, file -> fileSize);
+        }else{
+            char *endOfData = file -> Data;
+            int sizeRemaining = file -> fileSize;
+            int copySize;
+            while(cluster >= 0x002 && cluster < 0xFF8){
+                printf("%d\n", cluster);
+                assert(sizeRemaining >= 0);
+                copySize = (sizeRemaining < SECTORSIZE) ? sizeRemaining : SECTORSIZE;
+                memcpy(endOfData, fileData, copySize);
+                endOfData += copySize;
+                cluster = FAT[cluster];
+                sector = DATASTART + (cluster - 2);
+                fileData = Data + (sector * SECTORSIZE);
+                sizeRemaining -= copySize;
+            }
+        }
+        createFile(file, outDir);
+        free(file -> Data);
+        free(file);
+        return recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
+    }
 }
 
 int main(int argc, char *argv[]){
@@ -66,7 +134,7 @@ int main(int argc, char *argv[]){
         return 0;
     }
     char *imageFile = argv[1];
-    //char *outputDirectory = argv[2];
+    char *outputDirectory = argv[2];
 
     int fd = open(imageFile, O_RDWR, S_IRUSR | S_IWUSR);
     struct stat sb;
@@ -76,27 +144,25 @@ int main(int argc, char *argv[]){
     char *FAT1 = filemappedpage + (SECTORSIZE * FAT1START);
     //char *FAT2 = filemappedpage + (SECTORSIZE * FAT2START);
     char *rootDir = filemappedpage + (SECTORSIZE * ROOTDIRSTART);
-    //char *Data = filemappedpage + (SECTORSIZE * DATASTART);
+    char *Data = filemappedpage + (SECTORSIZE * DATASTART);
 
-    dirEntry *entry = NULL;
-    printf("sizeof(dirEntry) = %lu\n", sizeof(dirEntry));
+    //Set up Fat
+    int fatEntries = ((SECTORSIZE * (FAT2START - FAT1START)) * 2) / 3;
+    uint16_t *formattedFAT = malloc(fatEntries * sizeof(uint16_t));
+    uint8_t *firstClusterByte = (uint8_t *)FAT1;
+    uint16_t out1, out2;
     int i = 0;
-    while (i < 224){ //All possible root directory entries
-        entry = (dirEntry *)(rootDir + (i * sizeof(dirEntry)));
-        if (entry -> fileName[0] == 0x00) break;
-        else if (entry -> Attributes == 0x0F) i++;
-        else if(entry -> fileName[0] == 0xE5){
-            //Deleted File
-            i++;
-        }else if(entry -> Attributes & 0x10){
-            //Subdirectory
-            subdirectoryHandler(entry);
-            i++;
-        }else{
-            //Actual File
-            printFormat(entry);
-            i++;
-        }
+    while ((firstClusterByte + 2) < (uint8_t *)(FAT1) + (SECTORSIZE * (FAT2START - FAT1START))){
+        clusterFormat(*firstClusterByte, *(firstClusterByte + 1), *(firstClusterByte + 2), &out1, &out2);
+        formattedFAT[i] = out1;
+        formattedFAT[i + 1] = out2;
+
+        firstClusterByte += 3;
+        i += 2;
     }
+
+    //Begin Parse
+    dirEntry *entry = (dirEntry *)rootDir;
+    recFATHandler(entry, formattedFAT, Data, outputDirectory, "");
     return 0;
 }
