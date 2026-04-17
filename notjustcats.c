@@ -19,6 +19,9 @@
 #define NAME 1
 #define EXT 2
 
+#define NORMAL 1
+#define DELETED -1
+
 int numFiles = 0; //Keep track of number of files for naming purposes
 
 typedef struct{
@@ -56,16 +59,51 @@ char *nameFormat(char *string, int TYPE){
     return buf;
 }
 
-void printFormat(dirEntry *entry){
-    printf("FILE\tNORMAL\t%.8s.%.3s\t%d\n", nameFormat(entry -> fileName, NAME), nameFormat(entry -> extension, EXT), entry -> fileSize);
+void printFormat(dirEntry *entry, char *currentFilePath, int fileStatus){
+    char *name = nameFormat(entry->fileName, NAME);
+    char *ext = nameFormat(entry->extension, EXT);
+    char *status = "NORMAL";
+    if (fileStatus == DELETED){
+        name[0] = '_';
+        status = "DELETED";
+    }
+    if (strlen(ext) > 0)
+        printf("FILE\t%s\t%s%s.%s\t%d\n", status, currentFilePath, name, ext, entry->fileSize);
+    else
+        printf("FILE\t%s\t%s%s\t%d\n", status, currentFilePath, name, entry->fileSize);
+    free(name);
+    free(ext);
 }
 
-void createFile(fileStruct *file, char *outDir){
-    FILE *f = fopen("file -> fileName", "w");
-    fwrite(file -> Data, 1, file -> fileSize, f);
-    fclose(f);
+void createFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir){
+    char fileName[BUFFERSIZE];
+    char *ext = nameFormat(entry -> extension, EXT);
+    if (strlen(ext) > 0){
+        snprintf(fileName, sizeof(fileName), "%s/file%d.%s", outDir, numFiles++, ext);
+    }else{
+        snprintf(fileName, sizeof(fileName), "%s/file%d", outDir, numFiles++);
+    }
 
-    printf("FILE\tNORMAL\t%s\t%d\n", file -> fileName, file -> fileSize);
+    FILE *f = fopen(fileName, "w");
+    int cluster = entry -> firstLogicalCluster;
+    int sector = cluster - 2;
+    char *data = Data + (sector * SECTORSIZE);
+
+    if (entry -> fileSize <= SECTORSIZE){
+        fwrite(data, 1, entry -> fileSize, f);
+    }else{
+        int sizeRemaining = entry -> fileSize;
+        int copySize;
+        while (cluster != 0xFFF){
+            copySize = (sizeRemaining < SECTORSIZE) ? sizeRemaining : SECTORSIZE;
+            fwrite(data, 1, copySize, f);
+            cluster = FAT[cluster];
+            sector = cluster - 2;
+            data = Data + (sector * SECTORSIZE);
+            sizeRemaining -= copySize;
+        }
+    }
+    fclose(f);
 }
 
 void clusterFormat(uint8_t value1, uint8_t value2, uint8_t value3, uint16_t *out1, uint16_t *out2){
@@ -75,56 +113,31 @@ void clusterFormat(uint8_t value1, uint8_t value2, uint8_t value3, uint16_t *out
 
 void recFATHandler(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir, char *currentFilePath){
     if (entry -> fileName[0] == 0x00) return; //Base Case
-    else if(entry -> Attributes & 0x10 && entry -> fileName[0] != '.'){
+    else if((unsigned char)entry -> fileName[0] == 0xE5){
+        //Deleted File
+        int cluster = entry -> firstLogicalCluster;
+        if (FAT[cluster] == 0){
+            printFormat(entry, currentFilePath, DELETED);
+        }
+        recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
+    }else if(entry -> Attributes & 0x10){
         //Subdirectory
+        if (entry -> fileName[0] == '.') return recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath); 
         char buf[PATHBUFFER];
-        snprintf(buf, sizeof(buf), "%s%s/", currentFilePath, nameFormat(entry -> fileName, NAME));
+        if (strlen(nameFormat(entry -> extension, EXT)) > 0)snprintf(buf, sizeof(buf), "%s%s.%s/", currentFilePath, nameFormat(entry -> fileName, NAME), nameFormat(entry -> extension, EXT));
+        else snprintf(buf, sizeof(buf), "%s%s/", currentFilePath, nameFormat(entry -> fileName, NAME));
 
         int cluster = entry -> firstLogicalCluster;
-        int sector = DATASTART + (cluster - 2);
+        int sector = cluster - 2;
         dirEntry *nextDir = (dirEntry *)(Data + (sector * SECTORSIZE));
         recFATHandler(nextDir, FAT, Data, outDir, buf);
-        recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
-    }else if(entry -> fileName[0] == 0xE5){
-        //Deleted File
-        printf("Deleted...\n");
         recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
     }else if(entry -> Attributes == 0x0F)return recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
     else{
         //Handle the File
-        fileStruct *file = malloc(sizeof(fileStruct));
-        file -> fileName = malloc(PATHBUFFER);
-        char buf[256];
-        snprintf(buf, sizeof(buf), "%s%s.%s", currentFilePath, nameFormat(entry -> fileName, NAME), nameFormat(entry -> extension, EXT));
-        strcpy(file -> fileName, buf);
-        file -> fileSize = entry -> fileSize;
-        file -> Data = calloc(1, file -> fileSize);
-
-        int cluster = entry -> firstLogicalCluster;
-        int sector = DATASTART + (cluster - 2);
-        char *fileData = Data + (sector * SECTORSIZE);
-        if (entry -> fileSize <= SECTORSIZE){
-            memcpy(file -> Data, fileData, file -> fileSize);
-        }else{
-            char *endOfData = file -> Data;
-            int sizeRemaining = file -> fileSize;
-            int copySize;
-            while(cluster >= 0x002 && cluster < 0xFF8){
-                printf("%d\n", cluster);
-                assert(sizeRemaining >= 0);
-                copySize = (sizeRemaining < SECTORSIZE) ? sizeRemaining : SECTORSIZE;
-                memcpy(endOfData, fileData, copySize);
-                endOfData += copySize;
-                cluster = FAT[cluster];
-                sector = DATASTART + (cluster - 2);
-                fileData = Data + (sector * SECTORSIZE);
-                sizeRemaining -= copySize;
-            }
-        }
-        createFile(file, outDir);
-        free(file -> Data);
-        free(file);
-        return recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
+        createFile(entry, FAT, Data, outDir);
+        printFormat(entry, currentFilePath, NORMAL);
+        return recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath); 
     }
 }
 
