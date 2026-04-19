@@ -106,6 +106,36 @@ void createFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir){
     fclose(f);
 }
 
+void createDeletedFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir){
+    assert(FAT[entry -> firstLogicalCluster] == 0x000);
+    char fileName[BUFFERSIZE];
+    char *ext = nameFormat(entry -> extension, EXT);
+    if (strlen(ext) > 0){
+        snprintf(fileName, sizeof(fileName), "%s/file%d.%s", outDir, numFiles++, ext);
+    }else{
+        snprintf(fileName, sizeof(fileName), "%s/file%d", outDir, numFiles++);
+    }
+
+    FILE *f = fopen(fileName, "w");
+    int cluster = entry -> firstLogicalCluster;
+    int sector = cluster - 2;
+    char *data = Data + (sector * SECTORSIZE);
+    if (entry -> fileSize <= SECTORSIZE){
+        fwrite(data, 1, entry -> fileSize, f);
+    }else{
+        int sizeRemaining = entry -> fileSize;
+        int copySize;
+        while (cluster == 0x000){
+            copySize = (sizeRemaining < SECTORSIZE) ? sizeRemaining : SECTORSIZE;
+            fwrite(data, 1, copySize, f);
+            cluster++;
+            sector = cluster - 2;
+            data = Data + (sector * SECTORSIZE);
+            sizeRemaining -= copySize;
+        }
+    }
+}
+
 void clusterFormat(uint8_t value1, uint8_t value2, uint8_t value3, uint16_t *out1, uint16_t *out2){
     *out1 = ((value2 & 0x0F) << 8) | value1;
     *out2 = (value3 << 4) | (value2 >> 4);
@@ -118,6 +148,7 @@ void recFATHandler(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir, cha
         int cluster = entry -> firstLogicalCluster;
         if (FAT[cluster] == 0){
             printFormat(entry, currentFilePath, DELETED);
+            createDeletedFile(entry, FAT, Data, outDir);
         }
         recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
     }else if(entry -> Attributes & 0x10){
@@ -176,6 +207,6 @@ int main(int argc, char *argv[]){
 
     //Begin Parse
     dirEntry *entry = (dirEntry *)rootDir;
-    recFATHandler(entry, formattedFAT, Data, outputDirectory, "");
+    recFATHandler(entry, formattedFAT, Data, outputDirectory, "/");
     return 0;
 }
