@@ -12,6 +12,10 @@ notjustcats: notjustcats.c
 
 clean:
 	rm -f notjustcats
+	rm -f TestDir/*
+	rm -f $(TESTDIR)/**
+	rmdir $(TESTDIR)/*
+
 
 test: notjustcats
 	rm -rf $(TESTDIR)/*

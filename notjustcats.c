@@ -107,7 +107,6 @@ void createFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir){
 }
 
 void createDeletedFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir){
-    assert(FAT[entry -> firstLogicalCluster] == 0x000);
     char fileName[BUFFERSIZE];
     char *ext = nameFormat(entry -> extension, EXT);
     if (strlen(ext) > 0){
@@ -145,12 +144,26 @@ void recFATHandler(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir, cha
     if (entry -> fileName[0] == 0x00) return; //Base Case
     else if((unsigned char)entry -> fileName[0] == 0xE5){
         //Deleted File
+        if (entry -> Attributes & 0x10){// Deleted Directory
+            char buf[PATHBUFFER];
+            char *name = nameFormat(entry -> fileName, NAME);
+            char *ext = nameFormat(entry -> extension, EXT);
+            name[0] = '_';
+            if (strlen(ext) > 0) snprintf(buf, sizeof(buf), "%s%s.%s/", currentFilePath, name, ext);
+            else snprintf(buf, sizeof(buf), "%s%s/", currentFilePath, name);
+            int cluster = entry -> firstLogicalCluster;
+            int sector = cluster - 2;
+            dirEntry *nextDir = (dirEntry *)(Data + (sector * SECTORSIZE));
+            recFATHandler(nextDir, FAT, Data, outDir, buf);
+            recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);    
+        }else{
         int cluster = entry -> firstLogicalCluster;
         if (FAT[cluster] == 0){
-            printFormat(entry, currentFilePath, DELETED);
-            createDeletedFile(entry, FAT, Data, outDir);
+                printFormat(entry, currentFilePath, DELETED);
+                createDeletedFile(entry, FAT, Data, outDir);
+            }
+            recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);            
         }
-        recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
     }else if(entry -> Attributes & 0x10){
         //Subdirectory
         if (entry -> fileName[0] == '.') return recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath); 
