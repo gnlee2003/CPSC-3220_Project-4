@@ -94,7 +94,7 @@ void createFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir){
     }else{
         int sizeRemaining = entry -> fileSize;
         int copySize;
-        while (cluster != 0xFFF){
+        while (cluster < 0xFF8){
             copySize = (sizeRemaining < SECTORSIZE) ? sizeRemaining : SECTORSIZE;
             fwrite(data, 1, copySize, f);
             cluster = FAT[cluster];
@@ -124,7 +124,7 @@ void createDeletedFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir)
     }else{
         int sizeRemaining = entry -> fileSize;
         int copySize;
-        while (cluster == 0x000){
+        while (FAT[cluster] == 0x000){
             copySize = (sizeRemaining < SECTORSIZE) ? sizeRemaining : SECTORSIZE;
             fwrite(data, 1, copySize, f);
             cluster++;
@@ -133,6 +133,7 @@ void createDeletedFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir)
             sizeRemaining -= copySize;
         }
     }
+    fclose(f);
 }
 
 void clusterFormat(uint8_t value1, uint8_t value2, uint8_t value3, uint16_t *out1, uint16_t *out2){
@@ -199,7 +200,6 @@ int main(int argc, char *argv[]){
     char *filemappedpage = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
     
     char *FAT1 = filemappedpage + (SECTORSIZE * FAT1START);
-    //char *FAT2 = filemappedpage + (SECTORSIZE * FAT2START);
     char *rootDir = filemappedpage + (SECTORSIZE * ROOTDIRSTART);
     char *Data = filemappedpage + (SECTORSIZE * DATASTART);
 
