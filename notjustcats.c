@@ -34,10 +34,11 @@ typedef struct{
     char fileName[8];
     char extension[3];
     uint8_t Attributes;
-    uint16_t Reserved[2];
+    uint8_t Reserved[2];
     uint16_t creationTime;
     uint16_t creationDate;
     uint16_t lastAccessDate;
+    uint16_t randomTwoBytes;
     uint16_t lastWriteTime;
     uint16_t lastWriteDate;
     uint16_t firstLogicalCluster;
@@ -158,10 +159,10 @@ void recFATHandler(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir, cha
             recFATHandler(nextDir, FAT, Data, outDir, buf);
             recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);    
         }else{
-        int cluster = entry -> firstLogicalCluster;
-        if (FAT[cluster] == 0){
-                printFormat(entry, currentFilePath, DELETED);
-                createDeletedFile(entry, FAT, Data, outDir);
+            int cluster = entry -> firstLogicalCluster;
+            if (FAT[cluster] == 0){
+                    printFormat(entry, currentFilePath, DELETED);
+                    createDeletedFile(entry, FAT, Data, outDir);
             }
             recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);            
         }
