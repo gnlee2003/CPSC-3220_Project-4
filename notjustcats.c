@@ -163,8 +163,8 @@ void recFATHandler(dirEntry *entry, dirEntry *end, uint16_t *FAT, char *Data, ch
             recFATHandler(entry + 1, end, FAT, Data, outDir, currentFilePath);    
         }else{
             int cluster = entry -> firstLogicalCluster;
+            printFormat(entry, currentFilePath, DELETED);
             if (FAT[cluster] == 0){
-                    printFormat(entry, currentFilePath, DELETED);
                     createDeletedFile(entry, FAT, Data, outDir);
             }
             recFATHandler(entry + 1, end, FAT, Data, outDir, currentFilePath);            
