@@ -142,8 +142,8 @@ void clusterFormat(uint8_t value1, uint8_t value2, uint8_t value3, uint16_t *out
     *out2 = (value3 << 4) | (value2 >> 4);
 }
 
-void recFATHandler(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir, char *currentFilePath){
-    if (entry -> fileName[0] == 0x00) return; //Base Case
+void recFATHandler(dirEntry *entry, dirEntry *end, uint16_t *FAT, char *Data, char *outDir, char *currentFilePath){
+    if (entry -> fileName[0] == 0x00 || entry >= end) return; //Base Case
     else if((unsigned char)entry -> fileName[0] == 0xE5){
         //Deleted File
         if (entry -> Attributes & 0x10){// Deleted Directory
@@ -154,36 +154,42 @@ void recFATHandler(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir, cha
             if (strlen(ext) > 0) snprintf(buf, sizeof(buf), "%s%s.%s/", currentFilePath, name, ext);
             else snprintf(buf, sizeof(buf), "%s%s/", currentFilePath, name);
             int cluster = entry -> firstLogicalCluster;
-            int sector = cluster - 2;
-            dirEntry *nextDir = (dirEntry *)(Data + (sector * SECTORSIZE));
-            recFATHandler(nextDir, FAT, Data, outDir, buf);
-            recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);    
+            while (cluster >= 0x002 && cluster < 0xFF8){
+                int sector = cluster - 2;
+                dirEntry *nextDir = (dirEntry *)(Data + (sector * SECTORSIZE));
+                recFATHandler(nextDir, nextDir + (SECTORSIZE / sizeof(dirEntry)), FAT, Data, outDir, buf);
+                cluster = FAT[cluster];
+            }
+            recFATHandler(entry + 1, end, FAT, Data, outDir, currentFilePath);    
         }else{
             int cluster = entry -> firstLogicalCluster;
             if (FAT[cluster] == 0){
                     printFormat(entry, currentFilePath, DELETED);
                     createDeletedFile(entry, FAT, Data, outDir);
             }
-            recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);            
+            recFATHandler(entry + 1, end, FAT, Data, outDir, currentFilePath);            
         }
     }else if(entry -> Attributes & 0x10){
         //Subdirectory
-        if (entry -> fileName[0] == '.') return recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath); 
+        if (entry -> fileName[0] == '.') return recFATHandler(entry + 1, end, FAT, Data, outDir, currentFilePath); 
         char buf[PATHBUFFER];
         if (strlen(nameFormat(entry -> extension, EXT)) > 0)snprintf(buf, sizeof(buf), "%s%s.%s/", currentFilePath, nameFormat(entry -> fileName, NAME), nameFormat(entry -> extension, EXT));
         else snprintf(buf, sizeof(buf), "%s%s/", currentFilePath, nameFormat(entry -> fileName, NAME));
 
         int cluster = entry -> firstLogicalCluster;
-        int sector = cluster - 2;
-        dirEntry *nextDir = (dirEntry *)(Data + (sector * SECTORSIZE));
-        recFATHandler(nextDir, FAT, Data, outDir, buf);
-        recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
-    }else if(entry -> Attributes == 0x0F)return recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath);
+        while (cluster >= 0x002 && cluster < 0xFF8){
+            int sector = cluster - 2;
+            dirEntry *nextDir = (dirEntry *)(Data + (sector * SECTORSIZE));
+            recFATHandler(nextDir, nextDir + (SECTORSIZE / sizeof(dirEntry)), FAT, Data, outDir, buf);
+            cluster = FAT[cluster];
+        }
+        recFATHandler(entry + 1, end, FAT, Data, outDir, currentFilePath);
+    }else if(entry -> Attributes == 0x0F)return recFATHandler(entry + 1, end, FAT, Data, outDir, currentFilePath);
     else{
         //Handle the File
         createFile(entry, FAT, Data, outDir);
         printFormat(entry, currentFilePath, NORMAL);
-        return recFATHandler(entry + 1, FAT, Data, outDir, currentFilePath); 
+        return recFATHandler(entry + 1, end, FAT, Data, outDir, currentFilePath); 
     }
 }
 
@@ -221,6 +227,6 @@ int main(int argc, char *argv[]){
 
     //Begin Parse
     dirEntry *entry = (dirEntry *)rootDir;
-    recFATHandler(entry, formattedFAT, Data, outputDirectory, "/");
+    recFATHandler(entry, entry + ((SECTORSIZE * (DATASTART - ROOTDIRSTART)) / sizeof(dirEntry)), formattedFAT, Data, outputDirectory, "/");
     return 0;
 }
