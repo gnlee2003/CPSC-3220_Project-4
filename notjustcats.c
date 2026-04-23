@@ -116,25 +116,47 @@ void createDeletedFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir)
         snprintf(fileName, sizeof(fileName), "%s/file%d", outDir, numFiles++);
     }
 
-    FILE *f = fopen(fileName, "w");
+    FILE *f = fopen(fileName, "wb");
     int cluster = entry -> firstLogicalCluster;
     int sector = cluster - 2;
     char *data = Data + (sector * SECTORSIZE);
-    if (entry -> fileSize <= SECTORSIZE){
+
+    if(FAT[cluster] >= 0xFF8){
         fwrite(data, 1, entry -> fileSize, f);
+    }else if(FAT[cluster] == 0){
+        if (entry -> fileSize <= SECTORSIZE){
+            fwrite(data, 1, entry -> fileSize, f);
+        }else{
+            int sizeRemaining = entry -> fileSize;
+            int copySize;
+            while (sizeRemaining > 0 && FAT[cluster] == 0x000){
+                copySize = (sizeRemaining < SECTORSIZE) ? sizeRemaining : SECTORSIZE;
+                fwrite(data, 1, copySize, f);
+                sizeRemaining -= copySize;
+                if (sizeRemaining <= 0) break;
+                cluster++;
+                sector = cluster - 2;
+                data = Data + (sector * SECTORSIZE);
+            }
+        }
     }else{
-        int sizeRemaining = entry -> fileSize;
-        int copySize;
-        while (FAT[cluster] == 0x000){
-            copySize = (sizeRemaining < SECTORSIZE) ? sizeRemaining : SECTORSIZE;
-            fwrite(data, 1, copySize, f);
-            cluster++;
-            sector = cluster - 2;
-            data = Data + (sector * SECTORSIZE);
-            sizeRemaining -= copySize;
+        if (entry -> fileSize <= SECTORSIZE){
+            fwrite(data, 1, entry -> fileSize, f);
+        }else{
+            int sizeRemaining = entry -> fileSize;
+            int copySize;
+            while (cluster < 0xFF8){
+                copySize = (sizeRemaining < SECTORSIZE) ? sizeRemaining : SECTORSIZE;
+                fwrite(data, 1, copySize, f);
+                cluster = FAT[cluster];
+                sector = cluster - 2;
+                data = Data + (sector * SECTORSIZE);
+                sizeRemaining -= copySize;
+            }
         }
     }
     fclose(f);
+    free(ext);
 }
 
 void clusterFormat(uint8_t value1, uint8_t value2, uint8_t value3, uint16_t *out1, uint16_t *out2){
@@ -163,9 +185,9 @@ void recFATHandler(dirEntry *entry, dirEntry *end, uint16_t *FAT, char *Data, ch
             recFATHandler(entry + 1, end, FAT, Data, outDir, currentFilePath);    
         }else{
             int cluster = entry -> firstLogicalCluster;
-            printFormat(entry, currentFilePath, DELETED);
-            if (FAT[cluster] == 0){
-                    createDeletedFile(entry, FAT, Data, outDir);
+            if (FAT[cluster] == 0 || FAT[cluster] >= 0xFF8){
+                printFormat(entry, currentFilePath, DELETED);
+                createDeletedFile(entry, FAT, Data, outDir);
             }
             recFATHandler(entry + 1, end, FAT, Data, outDir, currentFilePath);            
         }
