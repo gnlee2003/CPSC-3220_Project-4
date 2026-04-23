@@ -1,17 +1,26 @@
 Name: Gavin Lee
 
 Description:
-
+notjustcats.c is a program that takes a FAT12 disk image and recovers normal and deleted files and places them inside the desired directory. 
 
 DESIGN
 ------
+My implementation of this project uses mmap to pull the disk image into memory. It then uses bit shifting and masking to format the FAT because of the little endian structure of the FAT12 file system. I then use a recursive function to recurse through the root directory.
 
+recFATHandler - brains of the operation. Uses recursion to move through the root directory and beyond in order to recover files. 
+createFile - Used to create "NORMAL" files(files that have not been deleted). This function creates a file for the new files to go and 
+             then writes the required data to it.
+createDeletedFile - Does very similar to createFile except for deleted files
+printFormat - This function has two modes, NAME and EXT. This allows it to format the name and extension of a file by adding the 
+              null terminator at the end.
 
 KNOWN PROBLEMS
 --------------
-There are no known problems at this time. 
+This program has a problem with deleted files. I was unable to diagnose this issue by the deadline.
 
 
 COMPILING
 ---------
+Compiled using make
 
+gcc -Wall -g notjustcats.c -o notjustcats

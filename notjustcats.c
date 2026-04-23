@@ -107,8 +107,9 @@ void createFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir){
     fclose(f);
 }
 
-//
+//This function creates the file if it has been deleted
 void createDeletedFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir){
+    //format the file name
     char fileName[BUFFERSIZE];
     char *ext = nameFormat(entry -> extension, EXT);
     if (strlen(ext) > 0){
@@ -139,16 +140,21 @@ void createDeletedFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir)
             }
         }
     }
-    // FAT[cluster] != 0: cluster reused, file created empty above
     fclose(f);
     free(ext);
 }
 
+//Function that is used to correctly format the FAT clusters
+//Inputs are the three 2 byte numbers
+//Outputs are the out1 and out2 that store 4 byte numbers
 void clusterFormat(uint8_t value1, uint8_t value2, uint8_t value3, uint16_t *out1, uint16_t *out2){
     *out1 = ((value2 & 0x0F) << 8) | value1;
     *out2 = (value3 << 4) | (value2 >> 4);
 }
 
+//recFATHandler controls the entire process
+//Recursive function that takes a directory entry, the FAT, data, the specified output directory and the current file path
+//to recurse through the FAT
 void recFATHandler(dirEntry *entry, dirEntry *end, uint16_t *FAT, char *Data, char *outDir, char *currentFilePath){
     if (entry -> fileName[0] == 0x00 || entry >= end) return; //Base Case
     else if((unsigned char)entry -> fileName[0] == 0xE5){
@@ -201,18 +207,21 @@ void recFATHandler(dirEntry *entry, dirEntry *end, uint16_t *FAT, char *Data, ch
 }
 
 int main(int argc, char *argv[]){
-    if (argc != 3){
+    if (argc != 3){ //Check for correct input by the user
         printf("Correct Usage: ./notjustcats <imagefilename> <output_directory>\n");
         return 0;
     }
+    //Grab user's inputs
     char *imageFile = argv[1];
     char *outputDirectory = argv[2];
 
+    //Pull the img file into memory
     int fd = open(imageFile, O_RDWR, S_IRUSR | S_IWUSR);
     struct stat sb;
     fstat(fd,&sb);
     char *filemappedpage = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
     
+    //Setup FAT12 special locations
     char *FAT1 = filemappedpage + (SECTORSIZE * FAT1START);
     char *rootDir = filemappedpage + (SECTORSIZE * ROOTDIRSTART);
     char *Data = filemappedpage + (SECTORSIZE * DATASTART);
@@ -235,5 +244,8 @@ int main(int argc, char *argv[]){
     //Begin Parse
     dirEntry *entry = (dirEntry *)rootDir;
     recFATHandler(entry, entry + ((SECTORSIZE * (DATASTART - ROOTDIRSTART)) / sizeof(dirEntry)), formattedFAT, Data, outputDirectory, "/");
+
+    munmap(filemappedpage, sb.st_size);
+    free(formattedFAT);
     return 0;
 }
