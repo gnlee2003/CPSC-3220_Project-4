@@ -7,28 +7,24 @@
 #include <sys/mman.h>
 #include <assert.h>
 
-#define BUFFERSIZE 1024
-#define SECTORSIZE 512
+#define BUFFERSIZE 1024 
+#define SECTORSIZE 512 //Size of each sector of Data in FAT12
 #define PATHBUFFER 64
 
-#define FAT1START 1
-#define FAT2START 10
-#define ROOTDIRSTART 19
-#define DATASTART 33
+#define FAT1START 1 //Sector of FAT1 start
+#define FAT2START 10 //End of FAT1
+#define ROOTDIRSTART 19 //Start of root directory
+#define DATASTART 33 //Start of data
 
-#define NAME 1
+//modes for helper function
+#define NAME 1 
 #define EXT 2
 
+//modes for helper function
 #define NORMAL 1
 #define DELETED -1
 
 int numFiles = 0; //Keep track of number of files for naming purposes
-
-typedef struct{
-    char *fileName;
-    int fileSize;
-    char *Data;
-} fileStruct;
 
 typedef struct{
     char fileName[8];
@@ -45,6 +41,7 @@ typedef struct{
     uint32_t fileSize;
 }__attribute__((packed)) dirEntry;
 
+//This function formats names from a directory entry given a string and a 'mode' from the #define above
 char *nameFormat(char *string, int TYPE){
     char *buf = calloc(1, PATHBUFFER);
     int len;
@@ -60,11 +57,12 @@ char *nameFormat(char *string, int TYPE){
     return buf;
 }
 
+//This function takes an entry a string of the file path and file status(DELETED or NORMAL)
 void printFormat(dirEntry *entry, char *currentFilePath, int fileStatus){
     char *name = nameFormat(entry->fileName, NAME);
     char *ext = nameFormat(entry->extension, EXT);
     char *status = "NORMAL";
-    if (fileStatus == DELETED){
+    if (fileStatus == DELETED){ //Replace the first character with _ if deleted
         name[0] = '_';
         status = "DELETED";
     }
@@ -76,6 +74,8 @@ void printFormat(dirEntry *entry, char *currentFilePath, int fileStatus){
     free(ext);
 }
 
+//This function takes a directory entry, the decoded FAT, the Data block, and the output directory given by the user
+//to write the data ot the file
 void createFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir){
     char fileName[BUFFERSIZE];
     char *ext = nameFormat(entry -> extension, EXT);
@@ -107,6 +107,7 @@ void createFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir){
     fclose(f);
 }
 
+//
 void createDeletedFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir){
     char fileName[BUFFERSIZE];
     char *ext = nameFormat(entry -> extension, EXT);
@@ -121,9 +122,7 @@ void createDeletedFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir)
     int sector = cluster - 2;
     char *data = Data + (sector * SECTORSIZE);
 
-    if(FAT[cluster] >= 0xFF8){
-        fwrite(data, 1, entry -> fileSize, f);
-    }else if(FAT[cluster] == 0){
+    if (FAT[cluster] == 0){
         if (entry -> fileSize <= SECTORSIZE){
             fwrite(data, 1, entry -> fileSize, f);
         }else{
@@ -139,22 +138,8 @@ void createDeletedFile(dirEntry *entry, uint16_t *FAT, char *Data, char *outDir)
                 data = Data + (sector * SECTORSIZE);
             }
         }
-    }else{
-        if (entry -> fileSize <= SECTORSIZE){
-            fwrite(data, 1, entry -> fileSize, f);
-        }else{
-            int sizeRemaining = entry -> fileSize;
-            int copySize;
-            while (cluster < 0xFF8){
-                copySize = (sizeRemaining < SECTORSIZE) ? sizeRemaining : SECTORSIZE;
-                fwrite(data, 1, copySize, f);
-                cluster = FAT[cluster];
-                sector = cluster - 2;
-                data = Data + (sector * SECTORSIZE);
-                sizeRemaining -= copySize;
-            }
-        }
     }
+    // FAT[cluster] != 0: cluster reused, file created empty above
     fclose(f);
     free(ext);
 }
